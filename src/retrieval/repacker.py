@@ -34,7 +34,7 @@ class DocumentRepacker:
     def repack_by_similarity(
         self,
         documents: list[Document],
-        distance_threshold: float = 1.5,
+        distance_threshold: float = 0.4,
     ) -> list[Document]:
         """Repack documents using agglomerative clustering for diversity.
 
@@ -79,20 +79,20 @@ class DocumentRepacker:
         for doc, label in zip(documents, labels):
             clusters.setdefault(int(label), []).append(doc)
 
-        # Select best document from each cluster (by rerank_score)
+        # Select best document from each cluster (by score: rerank_score -> fused_score -> dense_score)
         representatives: list[Document] = []
         for cluster_id, cluster_docs in sorted(clusters.items()):
             best_doc = max(
                 cluster_docs,
-                key=lambda d: d.metadata.get("rerank_score", 0.0),
+                key=lambda d: d.metadata.get("rerank_score") or d.metadata.get("fused_score") or d.metadata.get("dense_score") or 0.0,
             )
             best_doc.metadata["cluster_id"] = cluster_id
             best_doc.metadata["cluster_size"] = len(cluster_docs)
             representatives.append(best_doc)
 
-        # Sort representatives by rerank_score
+        # Sort representatives by score
         representatives.sort(
-            key=lambda d: d.metadata.get("rerank_score", 0.0),
+            key=lambda d: d.metadata.get("rerank_score") or d.metadata.get("fused_score") or d.metadata.get("dense_score") or 0.0,
             reverse=True,
         )
 

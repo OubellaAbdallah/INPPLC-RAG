@@ -1,14 +1,14 @@
 [tool.poetry]
-name = "mrag-menopause"
+name = "inpplc-rag"
 version = "1.0.0"
-description = "Multimodal RAG Framework for Menopause Health Information"
-authors = ["Sara El-Ateif", "Soufiane Elassri"]
+description = "RAG Information Assistant for INPPLC Morocco"
+authors = ["Soufiane Elassri"]
 readme = "README.md"
 license = "MIT"
 packages = [{include = "src"}]
 
 [tool.poetry.scripts]
-menoguide = "src.app.main:run"
+inpplc = "src.app.main:run"
 
 [tool.poetry.dependencies]
 python = ">=3.11,<3.14"
@@ -26,14 +26,10 @@ scikit-learn = ">=1.6.0"
 langchain = ">=1.2.0"
 langchain-community = ">=0.4.0"
 langchain-chroma = ">=1.1.0"
-langchain-google-genai = ">=4.2.0"
 langchain-huggingface = ">=1.2.0"
 
 # Vector store
 chromadb = ">=1.5.0"
-
-# Google Gemini
-google-genai = ">=1.67.0"
 
 # Document processing
 unstructured = {version = ">=0.16.0", extras = ["pdf"]}
@@ -47,7 +43,6 @@ python-magic-bin = {version = ">=0.4.14", markers = "sys_platform == 'win32'"}
 python-magic = {version = ">=0.4.27", markers = "sys_platform != 'win32'"}
 
 # Web scraping
-selenium = ">=4.28.0"
 requests = ">=2.32.0"
 
 # Configuration & logging

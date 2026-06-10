@@ -11,7 +11,7 @@ from typing import Any
 
 from langchain_core.documents import Document
 from langchain_core.messages import AIMessage, HumanMessage
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_community.llms import Ollama
 
 from src.config.settings import Settings, get_settings
 from src.generation.classifier import QueryClass, classify_query
@@ -26,19 +26,19 @@ from src.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
-def get_llm(settings: Settings | None = None) -> ChatGoogleGenerativeAI:
-    """Create a configured Gemini 2.0 Flash LLM instance.
+def get_llm(settings: Settings | None = None) -> Ollama:
+    """Create a configured Ollama LLM instance (mistral-inpplc).
 
     Args:
         settings: Application settings. Uses defaults if not provided.
 
     Returns:
-        Configured ChatGoogleGenerativeAI instance.
+        Configured Ollama instance.
     """
     settings = settings or get_settings()
-    return ChatGoogleGenerativeAI(
+    return Ollama(
         model=settings.llm_model_name,
-        google_api_key=settings.gemini_api_key,
+        base_url=settings.ollama_base_url,
         temperature=settings.llm_temperature,
     )
 
@@ -49,7 +49,7 @@ class ResponseGenerator:
     Handles three query types:
     - RAG_REQUIRED: Retrieves context and generates grounded response
     - DIRECT_RESPONSE: Generates conversational response without retrieval
-    - OUT_OF_SCOPE: Returns polite redirect to menopause topics
+    - OUT_OF_SCOPE: Returns polite redirect to INPPLC topics
 
     Args:
         llm: LLM instance for generation.
@@ -58,7 +58,7 @@ class ResponseGenerator:
 
     def __init__(
         self,
-        llm: ChatGoogleGenerativeAI,
+        llm: Ollama,
         settings: Settings | None = None,
     ) -> None:
         self._llm = llm

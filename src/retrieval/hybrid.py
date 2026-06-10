@@ -12,39 +12,18 @@ from langchain_chroma import Chroma
 from langchain_core.documents import Document
 
 from src.config.settings import Settings, get_settings
-from src.retrieval.bm25_index import BM25Index
+from src.retrieval.tfidf_index import TfidfIndex
 from src.retrieval.embeddings import EmbeddingModel
+from src.retrieval.translation import translate_query_to_french
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
 
-def _min_max_normalize(scores: list[float]) -> list[float]:
-    """Normalize scores to [0, 1] range using min-max scaling.
-
-    Args:
-        scores: Raw scores to normalize.
-
-    Returns:
-        Normalized scores. Returns zeros if all scores are equal.
-    """
-    if not scores:
-        return []
-
-    min_score = min(scores)
-    max_score = max(scores)
-    score_range = max_score - min_score
-
-    if score_range == 0:
-        return [0.0] * len(scores)
-
-    return [(s - min_score) / score_range for s in scores]
-
-
 def hybrid_retrieve(
     query: str,
     vectorstore: Chroma,
-    bm25_index: BM25Index,
+    tfidf_index: TfidfIndex,
     settings: Settings | None = None,
     k: int | None = None,
 ) -> list[Document]:
@@ -58,7 +37,7 @@ def hybrid_retrieve(
     Args:
         query: Search query string.
         vectorstore: ChromaDB vector store for dense retrieval.
-        bm25_index: BM25 index for sparse retrieval.
+        tfidf_index: TF-IDF index for sparse retrieval.
         settings: Application settings. Uses defaults if not provided.
         k: Number of results to return. Defaults to settings.retrieval_top_k.
 
@@ -73,20 +52,42 @@ def hybrid_retrieve(
     # Retrieve candidates from both indexes (fetch more than k for fusion)
     fetch_k = k * 5
 
-    # --- Dense retrieval with scores ---
     embedding_model = EmbeddingModel(settings)
-    query_embedding = embedding_model.embed_query(query)
+    translated_query = translate_query_to_french(query, settings)
 
+    # --- Dense retrieval with scores ---
+    query_embedding = embedding_model.embed_query(query)
     dense_results: list[tuple[Document, float]] = (
         vectorstore.similarity_search_by_vector_with_relevance_scores(
             query_embedding, k=fetch_k
         )
     )
+    if translated_query != query:
+        translated_embedding = embedding_model.embed_query(translated_query)
+        translated_dense = vectorstore.similarity_search_by_vector_with_relevance_scores(
+            translated_embedding, k=fetch_k
+        )
+        # Merge dense results, keeping the highest similarity score for duplicates
+        dense_map = {doc.page_content[:200]: (doc, score) for doc, score in dense_results}
+        for doc, score in translated_dense:
+            key = doc.page_content[:200]
+            if key not in dense_map or score > dense_map[key][1]:
+                dense_map[key] = (doc, score)
+        dense_results = list(dense_map.values())
 
     # --- Sparse retrieval with scores ---
     sparse_results: list[tuple[Document, float]] = []
-    if bm25_index.is_loaded:
-        sparse_results = bm25_index.search_documents(query, k=fetch_k)
+    if tfidf_index.is_loaded:
+        sparse_results = tfidf_index.search_documents(query, k=fetch_k)
+        if translated_query != query:
+            translated_sparse = tfidf_index.search_documents(translated_query, k=fetch_k)
+            # Merge sparse results, keeping the highest score for duplicates
+            sparse_map = {doc.page_content[:200]: (doc, score) for doc, score in sparse_results}
+            for doc, score in translated_sparse:
+                key = doc.page_content[:200]
+                if key not in sparse_map or score > sparse_map[key][1]:
+                    sparse_map[key] = (doc, score)
+            sparse_results = list(sparse_map.values())
 
     if not dense_results and not sparse_results:
         logger.warning("no_retrieval_results", query=query[:100])
@@ -110,18 +111,27 @@ def hybrid_retrieve(
     # --- Collect all unique document keys ---
     all_keys = set(dense_scores.keys()) | set(sparse_scores.keys())
 
-    # --- Min-max normalize scores ---
-    dense_vals = [dense_scores.get(k, 0.0) for k in all_keys]
-    sparse_vals = [sparse_scores.get(k, 0.0) for k in all_keys]
+    # --- Compute wRRF Scores ---
+    wrrf_k = settings.wrrf_k
 
-    dense_norm = _min_max_normalize(dense_vals)
-    sparse_norm = _min_max_normalize(sparse_vals)
+    # Calculate 1-based ranks
+    dense_ranks = {doc.page_content[:200]: rank for rank, (doc, _) in enumerate(dense_results, 1)}
+    sparse_ranks = {doc.page_content[:200]: rank for rank, (doc, _) in enumerate(sparse_results, 1)}
 
-    # --- Fuse scores: S_final = alpha * S_dense + (1 - alpha) * S_sparse ---
     fused_results: list[tuple[str, float, float, float]] = []
-    for key, d_norm, s_norm in zip(all_keys, dense_norm, sparse_norm):
-        fused_score = alpha * d_norm + (1 - alpha) * s_norm
-        fused_results.append((key, fused_score, d_norm, s_norm))
+    for key in all_keys:
+        d_rank = dense_ranks.get(key, float('inf'))
+        s_rank = sparse_ranks.get(key, float('inf'))
+
+        d_wrrf = alpha * (1.0 / (wrrf_k + d_rank)) if d_rank != float('inf') else 0.0
+        s_wrrf = (1 - alpha) * (1.0 / (wrrf_k + s_rank)) if s_rank != float('inf') else 0.0
+        fused_score = d_wrrf + s_wrrf
+
+        # Keep original raw scores for metadata
+        raw_d_score = dense_scores.get(key, 0.0)
+        raw_s_score = sparse_scores.get(key, 0.0)
+
+        fused_results.append((key, fused_score, raw_d_score, raw_s_score))
 
     # --- Sort by fused score descending ---
     fused_results.sort(key=lambda x: x[1], reverse=True)

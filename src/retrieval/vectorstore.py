@@ -2,10 +2,13 @@
 
 Provides factory functions for creating and loading ChromaDB collections
 with persistent storage to data/indices/chroma_db/.
+
+Compatible with chromadb >= 1.3 (PersistentClient API).
 """
 
 from __future__ import annotations
 
+import chromadb
 from langchain_chroma import Chroma
 
 from src.config.settings import Settings, get_settings
@@ -16,21 +19,28 @@ logger = get_logger(__name__)
 
 
 def get_vectorstore(settings: Settings | None = None) -> Chroma:
-    """Create or load the ChromaDB vector store.
+    """Load the ChromaDB vector store using the PersistentClient API.
+
+    Creates a :class:`chromadb.PersistentClient` pointed at the configured
+    ``chroma_db_dir``, then wraps it in a LangChain :class:`~langchain_chroma.Chroma`
+    instance for compatibility with the rest of the pipeline.
 
     Args:
-        settings: Application settings. Uses defaults if not provided.
+        settings: Application settings. Uses ``get_settings()`` if not provided.
 
     Returns:
-        Configured Chroma vector store instance.
+        Configured :class:`~langchain_chroma.Chroma` vector store instance.
     """
     settings = settings or get_settings()
     embedding_model = EmbeddingModel(settings)
 
+    # chromadb >= 1.3 uses PersistentClient instead of persist_directory kwarg
+    chroma_client = chromadb.PersistentClient(path=str(settings.chroma_db_dir))
+
     vectorstore = Chroma(
+        client=chroma_client,
         collection_name=settings.collection_name,
         embedding_function=embedding_model,
-        persist_directory=str(settings.chroma_db_dir),
     )
 
     logger.info(

@@ -1,9 +1,9 @@
 services:
-  menoguide:
+  inpplc:
     build: .
-    container_name: menoguide
+    container_name: inpplc-chatbot
     ports:
-      - "8501:8501"
+      - "8000:8000"
     volumes:
       # Persist data across container restarts
       - ./data/raw:/app/data/raw
@@ -11,6 +11,11 @@ services:
       - ./data/indices:/app/data/indices
       # HuggingFace model cache (avoids re-downloading)
       - hf_cache:/root/.cache/huggingface
+    env_file:
+      - .env
+    environment:
+      # Point to Ollama running on host (if used)
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
     restart: unless-stopped
 
 volumes:

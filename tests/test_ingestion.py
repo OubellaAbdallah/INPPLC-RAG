@@ -33,17 +33,7 @@ class TestPDFParser:
 
         assert PDFParser.compute_file_hash(file1) != PDFParser.compute_file_hash(file2)
 
-    def test_serialize_metadata_dict(self) -> None:
-        """Should handle plain dict metadata."""
-        metadata = {"key": "value", "number": 42}
-        result = PDFParser._serialize_metadata(metadata)
-        assert result == {"key": "value", "number": 42}
 
-    def test_serialize_metadata_non_serializable(self) -> None:
-        """Should convert non-serializable values to strings."""
-        metadata = {"key": "value", "bad": object()}
-        result = PDFParser._serialize_metadata(metadata)
-        assert isinstance(result["bad"], str)
 
     def test_manifest_round_trip(self, tmp_path: Path, settings: Settings) -> None:
         """Manifest should save and load correctly."""
@@ -75,7 +65,7 @@ class TestDocumentChunker:
 
         chunker = DocumentChunker()
         # Create a long text
-        text = "Menopause symptoms include hot flashes and night sweats. " * 100
+        text = "Anti-corruption policies and good governance guidelines are important. " * 100
         chunks = chunker.chunk_text(text)
 
         assert len(chunks) > 1
@@ -95,7 +85,7 @@ class TestDocumentChunker:
         from src.ingestion.chunker import DocumentChunker
 
         chunker = DocumentChunker()
-        text = "Menopause affects women between ages 45-55. " * 20
+        text = "INPPLC whistleblowing and reporting channels are available. " * 20
         metadata = {"source_file": "test.pdf", "page": 1}
         chunks = chunker.chunk_text(text, metadata)
 

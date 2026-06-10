@@ -1,4 +1,4 @@
-"""Structured logging configuration for the MenoGuide MRAG system.
+"""Structured logging configuration for the INPPLC RAG system.
 
 Provides consistent, structured logging across all modules using structlog.
 Outputs colored console logs in development, JSON in production.

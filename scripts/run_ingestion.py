@@ -1,7 +1,7 @@
 """CLI entry point for the document ingestion pipeline.
 
 Usage:
-    python -m scripts.run_ingestion [--pdf-dir PATH] [--skip-captioning]
+    python -m scripts.run_ingestion [--data-dir PATH] [--skip-captioning]
 """
 
 from __future__ import annotations
@@ -16,13 +16,13 @@ from src.utils.logging import get_logger
 def main() -> None:
     """Run the ingestion pipeline with CLI arguments."""
     parser = argparse.ArgumentParser(
-        description="MenoGuide Document Ingestion Pipeline"
+        description="INPPLC Document Ingestion Pipeline"
     )
     parser.add_argument(
-        "--pdf-dir",
+        "--data-dir",
         type=Path,
         default=None,
-        help="Directory containing PDFs (default: data/raw/)",
+        help="Directory containing documents (default: data/raw/)",
     )
     parser.add_argument(
         "--skip-captioning",
@@ -36,7 +36,7 @@ def main() -> None:
 
     pipeline = IngestionPipeline()
     stats = pipeline.run(
-        pdf_dir=args.pdf_dir,
+        pdf_dir=args.data_dir,
         skip_captioning=args.skip_captioning,
     )
 

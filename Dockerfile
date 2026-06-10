@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.11-slim
 
 # System deps for unstructured (poppler, tesseract), opencv, and general tooling
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -19,22 +19,16 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application source
 COPY src/ src/
 COPY scripts/ scripts/
-COPY .env .env
+COPY webapp/ webapp/
+COPY api.py api.py
 
 # Create data directories
 RUN mkdir -p data/raw data/processed data/indices
 
-# Create .streamlit config
-RUN mkdir -p .streamlit
-RUN echo '[server]\nheadless = true\nport = 8501\naddress = "0.0.0.0"\n\n[theme]\nprimaryColor = "#E91E8C"\nbackgroundColor = "#FFF5F7"\nsecondaryBackgroundColor = "#FFE4EC"\ntextColor = "#333333"' > .streamlit/config.toml
-
-EXPOSE 8501
+EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health')"
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
 
-# Default: run the Streamlit app
-CMD ["streamlit", "run", "src/app/main.py", \
-    "--server.port=8501", \
-    "--server.address=0.0.0.0", \
-    "--server.headless=true"]
+# Run FastAPI app with Uvicorn
+CMD ["python", "-m", "uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000"]

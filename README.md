@@ -1,139 +1,209 @@
-# MenoGuide — Multimodal RAG for Menopause Health Information
+# Assistant RAG de Consultation Juridique — INPPLC
 
-A peer-reviewed Multimodal Retrieval-Augmented Generation (MRAG) framework that provides
-evidence-based menopause health information grounded in curated PLOS ONE articles.
+Ce projet implémente un assistant intelligent basé sur la **Génération Augmentée de Récupération (RAG)** pour l'**Instance Nationale de la Probité, de la Prévention et de la Lutte contre la Corruption (INPPLC)** du Royaume du Maroc. Il est conçu pour orienter et répondre aux questions relatives aux lois anti-corruption, aux déclarations de patrimoine, aux rapports d'évaluation nationaux et à la bonne gouvernance.
 
-## Architecture
+---
+
+## 🚀 Fonctionnalités Clés
+
+L'assistant intègre des composants avancés pour offrir une expérience fiable, sécurisée et transparente :
+
+### 1. Ingestion Multimodale de Documents (Mistral OCR + LLM)
+- Analyse et extrait le contenu textuel de documents complexes (PDFs officiels, scans) via l'API Mistral OCR.
+- Effectue un post-traitement par grand modèle linguistique (LLM) afin de traduire sous forme de descriptions textuelles naturelles les tableaux complexes, graphiques, figures et schémas tout en conservant l'exactitude des données.
+- Utilise une empreinte SHA-256 (manifeste d'idempotence) pour éviter de traiter deux fois les mêmes documents.
+
+### 2. Guardrails et Classification Automatique des Requêtes
+- Analyse et classifie chaque message utilisateur en trois types de requêtes :
+  - **RAG_REQUIRED :** Requête factuelle relative au domaine de l'INPPLC nécessitant une recherche documentaire.
+  - **DIRECT_RESPONSE :** Salutations ou questions d'ordre général ne nécessitant pas de recherche documentaire.
+  - **OUT_OF_SCOPE :** Sujet hors du cadre réglementaire/corruption. Le système refuse poliment de répondre pour éviter les hallucinations hors domaine.
+
+### 3. Réécriture de Requête Basée sur l'Historique (Query Rewriting)
+- Reformule la requête de l'utilisateur en intégrant le contexte de la conversation en cours afin de maintenir une continuité parfaite lors d'une discussion en plusieurs étapes.
+
+### 4. Recherche Hybride Sémantique et Lexicale (Dense & Sparse)
+- Combine la recherche sémantique dense basée sur les plongements vectoriels (embeddings `BAAI/bge-large-en-v1.5` stockés sous ChromaDB) et la recherche lexicale sparse (TF-IDF & BM25) pour garantir un taux de rappel et de précision maximal.
+
+### 5. Streaming Asynchrone en Temps Réel (Server-Sent Events)
+- L'API FastAPI diffuse la réponse générée par Mistral Large mot par mot (streaming token-by-token via SSE) pour minimiser le temps d'attente utilisateur.
+
+### 6. Traçabilité des Sources et Panneau d'Audit (Audit Trail)
+- Transparence totale : l'interface web comprend un volet latéral d'audit affichant pour chaque réponse de l'assistant les extraits exacts des documents consultés, leur score de pertinence et leur fichier source.
+
+### 7. Gestion de Sessions et Historique Persistant
+- Stocke l'historique des conversations dans une base de données JSON locale (`data/chat_sessions.json`), permettant de reprendre n'importe quelle session de chat précédente.
+
+### 8. Exportation de Notes Juridiques au Format PDF
+- Génère instantanément une note de consultation structurée (Faits, Analyse, Recommandations, Sources juridiques et scores de pertinence) téléchargeable directement au format PDF grâce à `html2pdf.js`.
+
+---
+
+## 🛠️ Architecture Technique
 
 ```
-User Query → LLM Query Classifier (96% accuracy)
-                    │
-        ┌───────────┴───────────┐
-        ▼                       ▼
-  Direct Response         RAG Pipeline
-                               │
-                    ┌──────────┴──────────┐
-                    ▼                     ▼
-              Dense Search          BM25 Search
-              (BGE-large)           (k1=1.5, b=0.75)
-                    │                     │
-                    └──────┬──────────────┘
-                           ▼
-                   Score Fusion (α=0.7)
-                           ▼
-                   Cross-Encoder Reranking
-                   (ms-marco-MiniLM-L-6-v2)
-                           ▼
-                   Semantic Repacking
-                   (Diversity: 9.2/10)
-                           ▼
-                   Gemini 2.0 Flash Generation
-                           ▼
-                   Grounded Response + Citations
+                       Message de l'utilisateur
+                                  │
+                                  ▼
+             Classification & Guardrail (Outils LLM)
+             ├── DIRECT_RESPONSE -> Réponse immédiate
+             ├── OUT_OF_SCOPE    -> Refus poli
+             └── RAG_REQUIRED    -> Poursuite du pipeline
+                                  │
+                                  ▼
+                 Réécriture de la Requête (Mistral)
+               (Prend en compte l'historique de chat)
+                                  │
+                                  ▼
+                      Recherche Hybride (Dense + Sparse)
+            ├── Dense : ChromaDB (Embedding: BGE-large-en-v1.5)
+            └── Sparse : TF-IDF / BM25
+                                  │
+                                  ▼
+                     Génération Stream (SSE)
+                       (Mistral Large API)
+                                  │
+                                  ▼
+                Rapport Web + Panneau d'Audit + PDF
 ```
 
-## Published Metrics
+---
 
-| Metric | Score | 95% CI |
-|--------|-------|--------|
-| Faithfulness | 88% | ±3.1% |
-| Answer Relevance | 90% | ±2.8% |
-| Context Precision | 85% | ±3.6% |
-| SUS Score | 82/100 | — |
-| Routing Accuracy | 96% | — |
+## 📂 Structure du Projet
 
-## Tech Stack
+```
+Inpplc-RAG/
+├── api.py                      # Serveur principal FastAPI (SSE, endpoints de chat et sessions)
+├── requirements.txt            # Liste des dépendances Python requises pour la production
+├── pyproject.toml              # Fichier de configuration Poetry pour l'environnement dev
+├── webapp/                     # Partie client (Interface Web)
+│   ├── index.html              # Structure de l'application (Single Page App)
+│   ├── style.css               # Feuille de style (Thème moderne vert #1B5E35 et or #C8A84B)
+│   ├── app.js                  # Logique d'affichage, streaming SSE, export PDF et sessions
+│   └── assets/                 # Ressources statiques (logo INPPLC)
+├── src/                        # Code source Python interne
+│   ├── config/                 # Gestion des configurations par Pydantic Settings
+│   ├── ingestion/              # Extraction, captioning et chunking de documents
+│   ├── retrieval/              # Indexation dense, sparse, recherche hybride et re-ranking
+│   ├── generation/             # Gestion des invites (prompts), classification et appel LLM
+│   └── utils/                  # Outils d'aide (système de logs structurés, formateurs)
+├── data/                       # Conteneur des données de l'application
+│   ├── raw/                    # Dossier source des documents officiels (PDF, TXT)
+│   ├── processed/              # Fichiers de cache de parsing intermédiaire
+│   └── indices/                # Fichiers d'indexation vectorielle locale (ChromaDB, BM25)
+└── scripts/                    # Scripts utilitaires d'administration et d'évaluation
+    ├── run_ingestion.py        # Démarre l'analyse et l'indexation des documents bruts
+    ├── cleanup_junk_chunks.py  # Supprime les chunks de texte invalides de la base vectorielle
+    ├── test_rag_terminal.py    # Client CLI pour tester le pipeline RAG dans le terminal
+    └── run_evaluation.py       # Exécute l'évaluation automatisée Ragas
+```
 
-- **LLM:** Gemini 2.0 Flash
-- **Embeddings:** BAAI/bge-large-en-v1.5 (d=1024)
-- **Vector Store:** ChromaDB (local, privacy-focused)
-- **Sparse Retrieval:** BM25 (rank-bm25)
-- **Reranking:** ms-marco-MiniLM-L-6-v2
-- **Document Processing:** Unstructured library (hi-res strategy)
-- **Frontend:** Streamlit (4 tabs)
-- **PDF Reports:** FPDF2
-- **Evaluation:** RAGAS framework
-- **Dependency Management:** Poetry
+---
 
-## Setup
+## ⚙️ Configuration & Installation
 
-### Prerequisites
+### Prérequis
+- **Python 3.11** ou supérieur
+- Une clé API Mistral valide
 
-- Python 3.11+
-- Poetry
-- Tesseract OCR (for PDF processing)
-- Poppler (for PDF-to-image conversion)
+### 1. Installation des Dépendances
+Dans la racine du projet, créez un environnement virtuel et installez les dépendances :
+```powershell
+# Création de l'environnement virtuel
+python -m venv .venv
 
-### Installation
+# Activation (Windows)
+.venv\Scripts\activate
 
+# Activation (macOS/Linux)
+source .venv/bin/activate
+
+# Installation des dépendances
+pip install -r requirements.txt
+```
+
+### 2. Fichier d'Environnement
+Copiez le modèle `.env.example` en un fichier `.env` et mettez-y vos clés API :
 ```bash
-# Clone the repository
-git clone <repository-url>
-cd menopause-multimodal-rag
-
-# Install dependencies
-poetry install
-
-# Configure environment
 cp .env.example .env
-# Edit .env with your API keys (GEMINI_API_KEY, HF_API_TOKEN)
+```
+Assurez-vous de configurer au moins la clé suivante :
+```env
+MISTRAL_API_KEY="votre_cle_api_mistral"
 ```
 
-### Running the Application
+---
 
+## 🚀 Comment Lancer l'Application
+
+### Étape 1 : Indexer les Documents (Ingestion)
+Avant de lancer le chatbot, vous devez parser et indexer les documents réglementaires situés dans `data/raw/` :
 ```bash
-# Run the Streamlit app
-poetry run streamlit run src/app/main.py
-
-# Run document ingestion pipeline
-poetry run python -m scripts.run_ingestion
-
-# Run RAGAS evaluation
-poetry run python -m scripts.run_evaluation
+python -m scripts.run_ingestion
 ```
-
-## Project Structure
-
-```
-mrag-menopause/
-├── pyproject.toml              # Poetry dependencies
-├── .env.example                # Environment template
-├── src/
-│   ├── config/settings.py      # Pydantic BaseSettings
-│   ├── ingestion/              # PDF scraping, parsing, chunking, captioning
-│   ├── retrieval/              # Embeddings, vectorstore, BM25, hybrid, reranking, repacking
-│   ├── generation/             # Query classifier, prompts, RAG generator
-│   ├── evaluation/             # RAGAS evaluation pipeline
-│   ├── app/                    # Streamlit interface (4 tabs)
-│   └── utils/                  # Logging, helpers
-├── data/
-│   ├── raw/                    # PLOS ONE PDFs
-│   ├── processed/              # Parsed chunks, captions, manifest
-│   └── indices/                # ChromaDB, BM25 pickle
-├── tests/                      # pytest test suite
-├── scripts/                    # CLI entry points
-└── notebooks/                  # Exploration notebooks
-```
-
-## Application Tabs
-
-1. **RAG Chatbot** — Conversational interface with hybrid retrieval and source citations
-2. **Symptom Tracker** — 7-symptom severity tracking (0-10 scale)
-3. **PDF Report Generator** — Clinical report with AI-grounded recommendations
-4. **Educational Cards** — Curated fact cards from the PLOS ONE corpus
-
-## Docker Deployment
-
+*Note : Si vous souhaitez tester rapidement sans générer les descriptions de tableaux/figures, utilisez l'option `--skip-captioning` :*
 ```bash
-# Build and run with Docker Compose
-docker-compose up --build
-
-# Access at http://localhost:8501
+python -m scripts.run_ingestion --skip-captioning
 ```
 
-Ensure your `.env` file contains valid API keys before building.
-The container mounts `data/` volumes for persistence and caches HuggingFace models.
+### Étape 2 : Lancer le Serveur API
+Démarrez le serveur FastAPI :
+```bash
+python -m uvicorn api:app --host 0.0.0.0 --port 8000
+```
+Le serveur sera en ligne sur `http://localhost:8000`.
 
-## License
+### Étape 3 : Accéder à l'Interface Utilisateur
+- **Accès Direct (Hébergement API) :** Ouvrez simplement [http://localhost:8000/app](http://localhost:8000/app) dans votre navigateur. Le serveur FastAPI sert directement le frontend.
+- **Accès Client Autonome (Optionnel) :** Vous pouvez également servir l'interface via un simple serveur web local depuis le dossier webapp :
+  ```bash
+  cd webapp
+  python -m http.server 3000
+  ```
+  Accédez ensuite à l'application sur [http://localhost:3000](http://localhost:3000).
 
-This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
+---
+
+## 🐳 Déploiement avec Docker
+
+Le projet supporte un déploiement conteneurisé complet via Docker et Docker Compose.
+
+### 1. Lancer l'application avec Docker Compose
+Assurez-vous d'avoir configuré votre fichier `.env` avec votre clé Mistral. Lancez ensuite les conteneurs en tâche de fond :
+```bash
+docker-compose up --build -d
+```
+L'assistant sera accessible à l'adresse suivante : [http://localhost:8000/app](http://localhost:8000/app).
+
+### 2. Initialisation et Ingestion (Optionnel)
+Si la base de données vectorielle existe déjà sur votre machine hôte sous le dossier `data/indices/`, le conteneur l'utilisera directement via le montage de volume. L'assistant est donc immédiatement opérationnel.
+
+Si vous souhaitez par la suite lancer ou mettre à jour l'ingestion de nouveaux documents placés dans `data/raw/` :
+```bash
+docker exec -it inpplc-chatbot python -m scripts.run_ingestion
+```
+
+---
+
+## 🛠️ Commandes Utiles pour les Développeurs
+
+- **Lancer les tests unitaires et d'intégration :**
+  ```bash
+  python -m pytest
+  ```
+- **Tester le RAG dans le terminal en interactif :**
+  ```bash
+  python -m scripts.test_rag_terminal
+  ```
+- **Nettoyer les données résiduelles ou trop courtes de la base vectorielle ChromaDB :**
+  ```bash
+  python -m scripts.cleanup_junk_chunks
+  ```
+- **Reconstruire les index de recherche sparse uniquement :**
+  ```bash
+  python -m scripts.rebuild_tfidf
+  ```
+- **Reconstruire uniquement les index sémantiques (dense) :**
+  ```bash
+  python -m scripts.rebuild_embeddings
+  ```

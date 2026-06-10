@@ -1,7 +1,7 @@
-"""Multimodal captioning for tables and images via Gemini 2.0 Flash.
+"""Table and image captioning for INPPLC knowledge base.
 
-Generates medically-specific captions and summaries for RAG retrieval.
-Implements rate limiting (14 req/min) to respect Gemini API quotas.
+Generates detailed captions and summaries for RAG retrieval using
+the Mistral chat API.
 """
 
 from __future__ import annotations
@@ -9,9 +9,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from langchain_core.messages import HumanMessage
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_google_genai import ChatGoogleGenerativeAI
+from mistralai.client import Mistral
 
 from src.config.settings import Settings, get_settings
 from src.utils.logging import get_logger
@@ -19,52 +17,40 @@ from src.utils.logging import get_logger
 logger = get_logger(__name__)
 
 # ---------------------------------------------------------------------------
-# Prompt Templates (preserved verbatim from original models/prompt_templates.py)
+# Prompt Templates
 # ---------------------------------------------------------------------------
 
-TABLE_SUMMARIZER_PROMPT = """You are an expert medical data analyst specializing in menopause research.
-Your task is to create an extremely detailed and comprehensive summary of the following table
-from a peer-reviewed menopause research paper.
+TABLE_SUMMARIZER_PROMPT = """You are an expert data analyst specializing in governance and anti-corruption information.
+Your task is to create a detailed and comprehensive summary of the following table
+from an INPPLC (Instance Nationale de la Probité, de la Prévention et de la Lutte contre la Corruption) document.
 
 CRITICAL REQUIREMENTS:
-1. Extract ALL numerical data - every single number, percentage, p-value, confidence interval,
-   odds ratio, hazard ratio, and statistical measure present in the table
-2. Preserve the EXACT statistical values - do not round or approximate
+1. Extract ALL numerical data - every number, percentage, value, and measure present
+2. Preserve the EXACT values - do not round or approximate
 3. Include ALL row and column headers with their complete labels
-4. Capture every footnote, annotation, and special symbol
+4. Capture every footnote and annotation
 5. Note the units of measurement for every variable
-6. Include sample sizes (n) for every group/subgroup
-7. Document any missing data indicators (NA, NR, -, etc.)
+6. Include sample sizes for every group/subgroup
+7. Document any missing data indicators
 
 DETAILED ANALYSIS REQUIREMENTS:
-- Identify and describe the study design reflected in the table (cross-sectional, longitudinal, RCT, etc.)
-- Note the statistical tests used (chi-square, t-test, ANOVA, regression, etc.)
-- Extract all p-values and indicate significance levels (* p<0.05, ** p<0.01, *** p<0.001)
-- Report all confidence intervals with their exact bounds
-- Describe any dose-response relationships visible in the data
-- Note any subgroup analyses (by age, BMI, ethnicity, menopausal status, etc.)
+- Identify the data structure and relationships shown
+- Note any statistical measures or values presented
+- Describe any patterns or trends in the data
+- Include any contextual information about the data source
+- Note relevant governance or anti-corruption metrics
 
-MENOPAUSE-SPECIFIC CONTEXT:
-- Identify which menopausal stage(s) are referenced (perimenopause, menopause, postmenopause)
-- Note any hormone levels reported (estradiol, FSH, LH, progesterone, testosterone)
-- Document symptom severity scores and scales used (MRS, Kupperman, Greene Climacteric Scale)
-- Capture any treatment-related data (HRT types, dosages, duration, routes of administration)
-- Note body composition measurements (BMI, waist circumference, body fat percentage)
-- Include cardiovascular risk markers if present (blood pressure, lipids, glucose)
-- Document bone density measurements (T-scores, Z-scores, BMD values)
-- Capture quality of life scores and psychological assessment results
-
-TREATMENT INFORMATION:
-- If treatment data is present, extract: drug names, dosages, formulations
-- Note administration routes (oral, transdermal, vaginal)
-- Document treatment duration and follow-up periods
-- Extract efficacy outcomes and adverse event rates
-- Note any comparison between treatment groups
+CONTENT CONTEXT:
+- Identify topics or domains covered (corruption indices, governance indicators, etc.)
+- Note any demographic or geographic information presented
+- Document any institutional or regulatory measures
+- Capture quality scores or performance indicators if present
+- Include any outcome or impact metrics
 
 METHODOLOGY DETAILS:
 - Sample recruitment method and eligibility criteria reflected in the table
-- Any adjustment variables in multivariate analyses
-- Model specifications (logistic regression, Cox proportional hazards, etc.)
+- Any adjustment variables in analyses
+- Model specifications if applicable
 - Reference groups used for comparisons
 
 Table content:
@@ -76,11 +62,12 @@ Additional context from metadata:
 Provide an exhaustive summary that captures EVERY piece of information in this table.
 A reader should be able to reconstruct the complete table from your summary alone.
 Begin with a one-sentence overview of what the table presents, then systematically describe
-every section, column, and row with all associated values."""
+every section, column, and row with all associated values.
+Use the document's original language (French, Arabic, or English)."""
 
-IMAGE_SUMMARIZER_PROMPT = """You are an expert medical figure analyst specializing in menopause research visualization.
-Your task is to provide an extremely detailed description and analysis of the following figure
-from a peer-reviewed menopause research paper.
+IMAGE_SUMMARIZER_PROMPT = """You are an expert data visualization analyst.
+Your task is to provide a detailed description and analysis of the following figure
+from an INPPLC (Instance Nationale de la Probité, de la Prévention et de la Lutte contre la Corruption) document.
 
 FIGURE TYPE IDENTIFICATION:
 First, identify the type of figure:
@@ -88,80 +75,58 @@ First, identify the type of figure:
 - Line graph / Time series
 - Scatter plot / Correlation plot
 - Box plot / Violin plot
-- Forest plot (meta-analysis)
-- Kaplan-Meier survival curve
 - Heat map / Correlation matrix
-- Flow diagram / CONSORT diagram
-- Histological/microscopy image
-- Anatomical diagram
-- Hormone level curve
+- Flow diagram / Organizational chart
+- Process diagram / Schema
+- Histogram
+- Pie chart
 - Other (specify)
 
 AXES AND SCALES:
-- X-axis: label, units, range, tick marks, categories
-- Y-axis: label, units, range, tick marks, scale type (linear/log)
-- Secondary y-axis if present
-- Any axis breaks or discontinuities
+- X-axis: label, units, range, categories
+- Y-axis: label, units, range, scale type
+- Any axis labels and tick marks
 
 LEGEND AND ANNOTATIONS:
-- All legend entries with their visual markers (colors, patterns, symbols)
-- Any text annotations, arrows, or callouts
-- Statistical significance markers (*, **, ***, ns)
-- Reference lines (mean, median, threshold values)
-- Error bars: type (SD, SEM, 95% CI) and approximate values
+- All legend entries with their visual markers
+- Text annotations, arrows, or callouts
+- Statistical significance markers
+- Reference lines or thresholds
 
 QUANTITATIVE DATA EXTRACTION:
-- Extract approximate values for all data points visible
-- Note peaks, troughs, and inflection points
-- Identify trends (increasing, decreasing, U-shaped, J-shaped)
-- Estimate effect sizes where possible
-- Note any outliers or anomalous data points
+- Extract values visible in the figure
+- Note peaks, troughs, and trends
+- Identify patterns and relationships
+- Note any outliers
 
 STATISTICAL INDICATORS:
-- P-values displayed on the figure
-- Confidence bands or intervals
-- R-squared values or correlation coefficients
-- Sample sizes per group
-- Any test statistics reported
+- P-values or significance markers
+- Confidence intervals or bands
+- Correlation coefficients
+- Sample sizes
 
-TEMPORAL ANALYSIS (if applicable):
-- Time points measured
-- Duration of study period
-- Any seasonal or cyclical patterns
-- Rate of change between time points
+TEMPORAL OR CATEGORICAL ANALYSIS:
+- Time points or categories shown
+- Patterns across groups or time
+- Rate of change where applicable
 
-MENOPAUSE-SPECIFIC VISUALIZATION:
-- Hormone level trajectories (estrogen, FSH, LH patterns)
-- Symptom severity over time or across groups
-- Treatment response curves
-- Menopausal transition stages depicted
-- Age-related changes or distributions
-- Body composition changes
-- Bone density trends
-- Cardiovascular risk factor visualization
-- Quality of life score distributions
-
-CLINICAL SIGNIFICANCE:
-- What clinical message does this figure convey?
-- How does it support the paper's conclusions?
-- Are there clinically meaningful differences visible?
-- What implications for patient care can be drawn?
-
-MULTI-PANEL INTEGRATION (if applicable):
-- Relationship between panels (A, B, C, etc.)
-- How panels complement each other
-- Overall narrative across panels
+DOMAIN-SPECIFIC INSIGHTS:
+- Key governance or anti-corruption metrics shown
+- Trends or changes depicted
+- Comparisons between entities, regions, or time periods
 
 Figure metadata:
 {metadata}
 
-Provide a comprehensive description that would allow someone who cannot see the figure
-to fully understand its content, trends, and implications for menopause research.
-Include approximate numerical values wherever possible."""
+Provide a comprehensive description that allows full understanding of the figure's content,
+trends, patterns, and key findings. Include numerical values where possible.
+Use the document's original language (French, Arabic, or English)."""
+
+CHAT_MODEL = "mistral-large-latest"
 
 
 class TableCaptioner:
-    """Generates detailed summaries of medical tables via Gemini 2.0 Flash.
+    """Generates detailed summaries of tables using Mistral chat API.
 
     Args:
         settings: Application settings. Uses defaults if not provided.
@@ -169,21 +134,19 @@ class TableCaptioner:
 
     def __init__(self, settings: Settings | None = None) -> None:
         self._settings = settings or get_settings()
-        self._llm = ChatGoogleGenerativeAI(
-            model=self._settings.llm_model_name,
-            google_api_key=self._settings.gemini_api_key,
-            temperature=0.1,
-        )
-        self._prompt = ChatPromptTemplate.from_template(TABLE_SUMMARIZER_PROMPT)
-        self._chain = self._prompt | self._llm
-        self._min_interval = 60.0 / self._settings.gemini_rate_limit
+        api_key = self._settings.mistral_api_key
+        if not api_key:
+            raise ValueError(
+                "MISTRAL_API_KEY is not set. Add it to your .env file."
+            )
+        self._client = Mistral(api_key=api_key)
         self._last_call_time = 0.0
 
     def _rate_limit(self) -> None:
         """Enforce rate limiting between API calls."""
         elapsed = time.time() - self._last_call_time
-        if elapsed < self._min_interval:
-            time.sleep(self._min_interval - elapsed)
+        if elapsed < 0.5:
+            time.sleep(0.5 - elapsed)
         self._last_call_time = time.time()
 
     def generate_summary(
@@ -202,13 +165,18 @@ class TableCaptioner:
         """
         self._rate_limit()
         metadata_str = str(metadata) if metadata else "No additional metadata"
+        prompt = TABLE_SUMMARIZER_PROMPT.format(
+            data=table_content,
+            metadata=metadata_str,
+        )
 
         try:
-            result = self._chain.invoke({
-                "data": table_content,
-                "metadata": metadata_str,
-            })
-            return result.content
+            response = self._client.chat.complete(
+                model=CHAT_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,
+            )
+            return response.choices[0].message.content
         except Exception as e:
             logger.error("table_summary_error", error=str(e))
             return f"[Table summary unavailable: {e}]"
@@ -244,7 +212,7 @@ class TableCaptioner:
 
 
 class ImageCaptioner:
-    """Generates detailed captions of medical images via Gemini 2.0 Flash.
+    """Generates detailed captions of images using Mistral chat API.
 
     Args:
         settings: Application settings. Uses defaults if not provided.
@@ -252,19 +220,19 @@ class ImageCaptioner:
 
     def __init__(self, settings: Settings | None = None) -> None:
         self._settings = settings or get_settings()
-        self._llm = ChatGoogleGenerativeAI(
-            model=self._settings.llm_model_name,
-            google_api_key=self._settings.gemini_api_key,
-            temperature=0.1,
-        )
-        self._min_interval = 60.0 / self._settings.gemini_rate_limit
+        api_key = self._settings.mistral_api_key
+        if not api_key:
+            raise ValueError(
+                "MISTRAL_API_KEY is not set. Add it to your .env file."
+            )
+        self._client = Mistral(api_key=api_key)
         self._last_call_time = 0.0
 
     def _rate_limit(self) -> None:
         """Enforce rate limiting between API calls."""
         elapsed = time.time() - self._last_call_time
-        if elapsed < self._min_interval:
-            time.sleep(self._min_interval - elapsed)
+        if elapsed < 0.5:
+            time.sleep(0.5 - elapsed)
         self._last_call_time = time.time()
 
     def generate_caption(
@@ -272,7 +240,7 @@ class ImageCaptioner:
         image_base64: str,
         metadata: dict[str, Any] | None = None,
     ) -> str:
-        """Generate a detailed medical caption for an image.
+        """Generate a detailed caption for an image.
 
         Args:
             image_base64: Base64-encoded image string.
@@ -286,19 +254,23 @@ class ImageCaptioner:
         prompt_text = IMAGE_SUMMARIZER_PROMPT.format(metadata=metadata_str)
 
         try:
-            message = HumanMessage(
-                content=[
-                    {"type": "text", "text": prompt_text},
+            response = self._client.chat.complete(
+                model=CHAT_MODEL,
+                messages=[
                     {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/png;base64,{image_base64}"
-                        },
-                    },
-                ]
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt_text},
+                            {
+                                "type": "image_url",
+                                "image_url": f"data:image/png;base64,{image_base64}",
+                            },
+                        ],
+                    }
+                ],
+                temperature=0.1,
             )
-            result = self._llm.invoke([message])
-            return result.content
+            return response.choices[0].message.content
         except Exception as e:
             logger.error("image_caption_error", error=str(e))
             return f"[Image caption unavailable: {e}]"

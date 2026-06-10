@@ -8,7 +8,11 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
+
+# Force offline mode for Hugging Face hub (embeddings and rerankers) to use cached local files
+os.environ["HF_HUB_OFFLINE"] = "1"
 
 from src.evaluation.ragas_eval import load_test_queries, run_evaluation
 
@@ -16,7 +20,7 @@ from src.evaluation.ragas_eval import load_test_queries, run_evaluation
 def main() -> None:
     """Run RAGAS evaluation from the command line."""
     parser = argparse.ArgumentParser(
-        description="Run RAGAS evaluation on MenoGuide pipeline",
+        description="Run RAGAS evaluation on INPPLC RAG pipeline",
     )
     parser.add_argument(
         "--queries",
@@ -35,17 +39,31 @@ def main() -> None:
         action="store_true",
         help="Print per-query progress",
     )
+    parser.add_argument(
+        "--lang",
+        type=str,
+        default="all",
+        choices=["all", "fr", "ar", "en"],
+        help="Language to evaluate on for benchmark queries (default: all)",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Limit the number of queries to evaluate (e.g., 10)",
+    )
 
     args = parser.parse_args()
 
     queries = None
     if args.queries:
-        queries = load_test_queries(args.queries)
+        queries = load_test_queries(args.queries, lang=args.lang)
 
     run_evaluation(
         queries=queries,
         output_path=args.output,
         verbose=args.verbose,
+        limit=args.limit,
     )
 
 

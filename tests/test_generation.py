@@ -20,9 +20,9 @@ class TestQueryClassifier:
     """Tests for query classification."""
 
     def test_rag_required_classification(self, mock_llm: MagicMock) -> None:
-        """Clinical queries should be classified as RAG_REQUIRED."""
+        """INPPLC queries should be classified as RAG_REQUIRED."""
         mock_llm.invoke.return_value = MagicMock(content="RAG_REQUIRED")
-        result = classify_query("What causes hot flashes?", mock_llm)
+        result = classify_query("What are the missions of INPPLC?", mock_llm)
         assert result == QueryClass.RAG_REQUIRED
 
     def test_direct_response_classification(self, mock_llm: MagicMock) -> None:
@@ -66,9 +66,9 @@ class TestPrompts:
         }
 
     def test_out_of_scope_response_content(self) -> None:
-        """Out-of-scope response should mention menopause capabilities."""
-        assert "menopause" in OUT_OF_SCOPE_RESPONSE.lower()
-        assert "symptoms" in OUT_OF_SCOPE_RESPONSE.lower()
+        """Out-of-scope response should mention INPPLC capabilities."""
+        assert "inpplc" in OUT_OF_SCOPE_RESPONSE.lower()
+        assert "information" in OUT_OF_SCOPE_RESPONSE.lower()
 
 
 class TestResponseGenerator:
@@ -89,7 +89,7 @@ class TestResponseGenerator:
         """DIRECT_RESPONSE should not return the out-of-scope static text."""
         from src.generation.generator import ResponseGenerator
 
-        mock_llm.invoke.return_value = MagicMock(content="Hello! I'm MenoGuide.")
+        mock_llm.invoke.return_value = MagicMock(content="Hello! I'm INPPLC Assistant.")
         generator = ResponseGenerator(mock_llm)
 
         # DIRECT_RESPONSE path invokes the prompt|llm chain

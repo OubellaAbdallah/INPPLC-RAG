@@ -1,4 +1,4 @@
-"""Utility helper functions for the MenoGuide application.
+"""Utility helper functions for the INPPLC application.
 
 Provides asset loading, chat history formatting, and other shared utilities.
 """
@@ -21,7 +21,7 @@ def load_logo_base64() -> str | None:
     Returns:
         Base64 string of the logo image, or None if not found.
     """
-    logo_path = get_settings().assets_dir / "menopause.png"
+    logo_path = get_settings().assets_dir / "inpplc_logo.png"
     try:
         return base64.b64encode(logo_path.read_bytes()).decode()
     except FileNotFoundError:
@@ -92,6 +92,6 @@ def format_chat_history_for_prompt(
         if isinstance(msg, HumanMessage):
             formatted_lines.append(f"User Question: {msg.content}")
         elif isinstance(msg, AIMessage):
-            formatted_lines.append(f"MenoGuide Response: {msg.content}")
+            formatted_lines.append(f"INPPLC Assistant Response: {msg.content}")
 
     return "\n".join(formatted_lines)

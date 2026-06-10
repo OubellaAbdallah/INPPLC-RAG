@@ -41,7 +41,9 @@ class EmbeddingModel(Embeddings):
             model_name = self._settings.embedding_model_name
             logger.info("loading_embedding_model", model=model_name)
 
-            self._model = SentenceTransformer(model_name)
+            import torch
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            self._model = SentenceTransformer(model_name, device=device)
             logger.info(
                 "embedding_model_loaded",
                 model=model_name,

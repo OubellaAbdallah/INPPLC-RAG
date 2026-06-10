@@ -66,3 +66,12 @@ src/evaluation/test_queries.json
 evaluation_results/
 *_eval_results.json
 *_eval_results.csv
+
+# Local Chat Sessions Database
+data/chat_sessions.json
+
+# Custom user data folders
+data/PDFS/
+data/TEXTS/
+data/requests/
+

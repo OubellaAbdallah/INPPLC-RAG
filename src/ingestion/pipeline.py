@@ -13,7 +13,7 @@ from typing import Any
 
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
-from rank_bm25 import BM25Okapi
+from sklearn.feature_extraction.text import TfidfVectorizer
 from tqdm import tqdm
 
 from src.config.settings import Settings, get_settings
@@ -61,26 +61,26 @@ class IngestionPipeline:
             self._image_captioner = ImageCaptioner(self._settings)
         return self._image_captioner
 
-    def _parse_pdfs(
-        self, pdf_dir: Path | None = None
+    def _parse_documents(
+        self, data_dir: Path | None = None
     ) -> list[dict[str, Any]]:
-        """Parse all PDFs with idempotency.
+        """Parse all supported documents with idempotency.
 
         Args:
-            pdf_dir: Directory containing PDFs.
+            data_dir: Directory containing documents.
 
         Returns:
-            List of parsed element sets per PDF.
+            List of parsed element sets per document.
         """
-        return self._parser.process_pdfs(pdf_dir)
+        return self._parser.process_documents(data_dir)
 
     def _chunk_texts(
         self, parsed_results: list[dict[str, Any]]
     ) -> list[Document]:
-        """Chunk all text elements from parsed PDFs.
+        """Chunk all text elements from parsed documents.
 
         Args:
-            parsed_results: Output from _parse_pdfs().
+            parsed_results: Output from _parse_documents().
 
         Returns:
             List of chunked Document objects.
@@ -102,7 +102,7 @@ class IngestionPipeline:
         """Generate summaries for all tables and wrap as Documents.
 
         Args:
-            parsed_results: Output from _parse_pdfs().
+            parsed_results: Output from _parse_documents().
 
         Returns:
             List of Document objects containing table summaries.
@@ -133,7 +133,7 @@ class IngestionPipeline:
         """Generate captions for all images and wrap as Documents.
 
         Args:
-            parsed_results: Output from _parse_pdfs().
+            parsed_results: Output from _parse_documents().
 
         Returns:
             List of Document objects containing image captions.
@@ -208,39 +208,35 @@ class IngestionPipeline:
             persist_dir=chroma_db_dir,
         )
 
-    def _build_bm25_index(self, documents: list[Document]) -> None:
-        """Build and serialize BM25 sparse index.
+    def _build_tfidf_index(self, documents: list[Document]) -> None:
+        """Build and serialize TF-IDF sparse index.
 
         Args:
             documents: List of Document objects to index.
         """
         if not documents:
-            logger.warning("no_documents_for_bm25")
+            logger.warning("no_documents_for_tfidf")
             return
 
         corpus = [doc.page_content for doc in documents]
-        tokenized_corpus = [doc.lower().split() for doc in corpus]
 
-        bm25 = BM25Okapi(
-            tokenized_corpus,
-            k1=self._settings.bm25_k1,
-            b=self._settings.bm25_b,
-        )
+        vectorizer = TfidfVectorizer()
+        tfidf_matrix = vectorizer.fit_transform(corpus)
 
         index_data = {
-            "bm25": bm25,
+            "vectorizer": vectorizer,
+            "tfidf_matrix": tfidf_matrix,
             "corpus": corpus,
-            "tokenized_corpus": tokenized_corpus,
         }
 
-        index_path = self._settings.bm25_index_path
+        index_path = self._settings.tfidf_index_path
         index_path.parent.mkdir(parents=True, exist_ok=True)
 
         with open(index_path, "wb") as f:
             pickle.dump(index_data, f)
 
         logger.info(
-            "bm25_index_built",
+            "tfidf_index_built",
             documents=len(corpus),
             path=str(index_path),
         )
@@ -261,9 +257,9 @@ class IngestionPipeline:
         """
         logger.info("ingestion_pipeline_started")
 
-        # Step 1: Parse PDFs
-        logger.info("step_1_parsing_pdfs")
-        parsed_results = self._parse_pdfs(pdf_dir)
+        # Step 1: Parse Documents
+        logger.info("step_1_parsing_documents")
+        parsed_results = self._parse_documents(pdf_dir)
 
         # Step 2: Chunk text elements
         logger.info("step_2_chunking_texts")
@@ -290,12 +286,12 @@ class IngestionPipeline:
         logger.info("step_5_indexing_vectorstore")
         self._index_to_vectorstore(all_documents)
 
-        # Step 7: Build BM25 index
-        logger.info("step_6_building_bm25")
-        self._build_bm25_index(all_documents)
+        # Step 7: Build TF-IDF index
+        logger.info("step_6_building_tfidf")
+        self._build_tfidf_index(all_documents)
 
         stats = {
-            "pdfs_processed": len(parsed_results),
+            "documents_processed": len(parsed_results),
             "text_chunks": len(text_chunks),
             "table_summaries": len(table_docs),
             "image_captions": len(image_docs),

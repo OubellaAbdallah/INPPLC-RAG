@@ -1,7 +1,9 @@
-"""Semantic text chunking with token-aware splitting.
+"""Semantic text chunking with character-aware splitting for trilingual corpora.
 
-Implements the paper's chunking strategy: 512-token windows with
-64-token overlap using the BGE tokenizer for accurate token counting.
+Implements 350-character windows with 80-character overlap using the BAAI/bge-m3
+tokenizer for accurate token counting. Separators cover Arabic (،, ؟, ؛),
+French, and English sentence boundaries to preserve semantic units across all
+three languages used in the INPPLC corpus.
 """
 
 from __future__ import annotations
@@ -35,11 +37,27 @@ class DocumentChunker:
             chunk_size=self._settings.chunk_size,
             chunk_overlap=self._settings.chunk_overlap,
             length_function=self._token_length,
-            separators=["\n\n", "\n", ". ", " ", ""],
+            # Ordered from largest to smallest semantic unit.
+            # Arabic punctuation (،=comma, ؟=question, ؛=semicolon) is listed
+            # alongside Latin equivalents so all three languages split cleanly.
+            separators=[
+                "\n\n",     # paragraph break (all languages)
+                "\n",       # line break
+                ". ",       # Latin sentence end
+                "؟ ",       # Arabic question mark
+                "! ",       # exclamation
+                "؟",        # Arabic question mark (no trailing space)
+                "،",        # Arabic comma
+                "؛",        # Arabic semicolon
+                "; ",       # Latin semicolon
+                ", ",       # Latin comma
+                " ",        # word boundary
+                "",         # character boundary (last resort)
+            ],
         )
 
     def _load_tokenizer(self) -> Any:
-        """Load the BGE tokenizer for accurate token counting.
+        """Load the BAAI/bge-m3 tokenizer for accurate token counting.
 
         Returns:
             HuggingFace tokenizer instance.
@@ -86,6 +104,11 @@ class DocumentChunker:
             texts=[text],
             metadatas=[base_metadata],
         )
+
+        # Filter out junk chunks that are too short to be useful
+        # (e.g. single periods, whitespace, OCR artefacts)
+        MIN_CHUNK_CHARS = 20
+        docs = [d for d in docs if len(d.page_content.strip()) >= MIN_CHUNK_CHARS]
 
         for i, doc in enumerate(docs):
             doc.metadata["chunk_index"] = i

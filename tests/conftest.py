@@ -1,4 +1,4 @@
-"""Shared pytest fixtures for MenoGuide tests."""
+"""Shared pytest fixtures for INPPLC tests."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from src.config.settings import Settings
 def settings(tmp_path: Path) -> Settings:
     """Create test settings with temporary directories."""
     return Settings(
-        gemini_api_key="test-key",
+        ollama_base_url="http://localhost:11434",
         hf_api_token="test-token",
         log_level="DEBUG",
         _env_file=None,
@@ -27,29 +27,28 @@ def sample_documents() -> list[Document]:
     """Create sample documents for testing."""
     return [
         Document(
-            page_content="Hot flashes are the most common symptom of menopause, "
-            "affecting up to 80% of women during the menopausal transition.",
+            page_content="INPPLC is a national institution in Morocco dedicated to probity, prevention, "
+            "and combating corruption, serving to promote good governance.",
             metadata={"source_file": "test1.pdf", "element_type": "text"},
         ),
         Document(
-            page_content="Hormone replacement therapy (HRT) can effectively reduce "
-            "vasomotor symptoms but carries risks including increased "
-            "breast cancer risk with long-term use.",
+            page_content="The services and tasks provided by INPPLC include receiving whistleblowing reports, "
+            "assessing integrity in public administrations, and promoting ethics.",
             metadata={"source_file": "test2.pdf", "element_type": "text"},
         ),
         Document(
-            page_content="Regular physical activity has been shown to reduce the "
-            "frequency and severity of hot flashes by approximately 50%.",
+            page_content="Regular declarations of assets and transparency measures can help detect "
+            "conflicts of interest early and improve public trust.",
             metadata={"source_file": "test3.pdf", "element_type": "text"},
         ),
         Document(
-            page_content="Cognitive behavioral therapy (CBT) is effective for "
-            "managing sleep disturbances during menopause.",
+            page_content="Anti-corruption education and awareness campaigns are essential components "
+            "of the national integrity strategy in Morocco.",
             metadata={"source_file": "test4.pdf", "element_type": "text"},
         ),
         Document(
-            page_content="Soy isoflavones may provide modest relief from "
-            "menopausal symptoms through phytoestrogen activity.",
+            page_content="The protection of whistleblowers is a key legislative measure to encourage "
+            "reporting of financial irregularities and corruption.",
             metadata={"source_file": "test5.pdf", "element_type": "text"},
         ),
     ]

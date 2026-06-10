@@ -1,29 +1,78 @@
-"""PDF document parser using the Unstructured library.
+"""PDF document parser using the Mistral OCR API.
 
-Extracts text, tables, and images from PDFs using high-resolution strategy.
+Sends PDFs to Mistral's OCR endpoint and then post-processes the raw
+markdown output with a structured prompt that:
+  • extracts clean, organized text
+  • describes graphs, charts, and schemas in natural language
+  • describes tables with all numerical data preserved
+
 Implements SHA-256 hash-based idempotency to skip already-processed documents.
 """
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
+import time
 from pathlib import Path
 from typing import Any
 
-from unstructured.partition.pdf import partition_pdf
+import httpx
+from mistralai.client import Mistral
 
 from src.config.settings import Settings, get_settings
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+# ---------------------------------------------------------------------------
+# Post-processing prompt sent to Mistral chat after OCR extraction
+# ---------------------------------------------------------------------------
+
+POST_PROCESS_PROMPT = """\
+You are a text extraction tool. You receive raw OCR output from a PDF. \
+Your ONLY job is to return the cleaned-up text from the document.
+
+STRICT RULES — VIOLATION OF ANY RULE IS UNACCEPTABLE:
+1. Output ONLY the text that exists in the document. Nothing else.
+2. NEVER add introductions like "Voici le texte", "Here is", "Note:", etc.
+3. NEVER add your own commentary, analysis, explanations, or observations.
+4. NEVER add notes about OCR quality or missing content.
+5. NEVER fabricate or invent content that is not in the original.
+6. If the OCR output contains very little readable text, return ONLY that text.
+7. If the OCR output is empty or unreadable, return exactly: [EMPTY DOCUMENT]
+
+CLEANING RULES:
+- Fix obvious OCR errors (broken words, stray characters) without changing meaning.
+- Remove repeated decorative characters (e.g. "AAAAAAA") that are clearly OCR noise.
+- Preserve the original language (French, Arabic, English) — do NOT translate.
+- Preserve section headings, numbered lists, and bullet points.
+- Preserve tables in clean markdown table format.
+- For graphs/charts/schemas: write a brief factual description of what the figure shows, \
+prefixed with [FIGURE:] on its own line. Keep it to 2-3 sentences max.
+
+START YOUR OUTPUT DIRECTLY WITH THE DOCUMENT CONTENT. NO PREAMBLE.
+
+---
+RAW OCR CONTENT:
+{ocr_content}
+"""
+
+# ---------------------------------------------------------------------------
+# Mistral OCR + Chat parser
+# ---------------------------------------------------------------------------
+
+OCR_MODEL = "mistral-ocr-latest"
+CHAT_MODEL = "mistral-large-latest"
+
 
 class PDFParser:
-    """High-resolution PDF element extractor.
+    """Mistral OCR-based PDF element extractor.
 
-    Uses the Unstructured library's partition_pdf with hi_res strategy
-    to extract text, tables, and images as separate element streams.
+    Sends PDFs to Mistral OCR, then post-processes the markdown output
+    through a Mistral chat model to produce clean, structured text with
+    rich descriptions of tables, graphs, and schemas.
 
     Args:
         settings: Application settings. Uses defaults if not provided.
@@ -33,6 +82,20 @@ class PDFParser:
         self._settings = settings or get_settings()
         self._output_dir = self._settings.processed_dir
         self._output_dir.mkdir(parents=True, exist_ok=True)
+
+        api_key = self._settings.mistral_api_key
+        if not api_key:
+            raise ValueError(
+                "MISTRAL_API_KEY is not set. Add it to your .env file."
+            )
+        self._client = Mistral(
+            api_key=api_key,
+            timeout_ms=300_000,  # 5 minutes — large PDFs need time
+        )
+
+    # ------------------------------------------------------------------
+    # Hashing / manifest helpers (unchanged contract)
+    # ------------------------------------------------------------------
 
     @staticmethod
     def compute_file_hash(filepath: Path) -> str:
@@ -72,107 +135,154 @@ class PDFParser:
             encoding="utf-8",
         )
 
-    @staticmethod
-    def _serialize_metadata(metadata: Any) -> dict[str, Any]:
-        """Convert Unstructured metadata to JSON-serializable dictionary.
+    # ------------------------------------------------------------------
+    # Mistral OCR
+    # ------------------------------------------------------------------
 
-        Args:
-            metadata: Raw metadata from Unstructured elements.
-
-        Returns:
-            JSON-serializable dictionary.
-        """
-        if hasattr(metadata, "to_dict"):
-            raw = metadata.to_dict()
-        elif isinstance(metadata, dict):
-            raw = metadata
-        else:
-            raw = {"raw": str(metadata)}
-
-        serializable: dict[str, Any] = {}
-        for key, value in raw.items():
-            try:
-                json.dumps(value)
-                serializable[key] = value
-            except (TypeError, ValueError):
-                serializable[key] = str(value)
-        return serializable
-
-    def extract_pdf_elements(
-        self,
-        pdf_path: Path,
-    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
-        """Extract text, table, and image elements from a PDF.
-
-        Uses Unstructured's partition_pdf with hi_res strategy for
-        optimal extraction quality.
+    def _ocr_pdf(self, pdf_path: Path) -> str:
+        """Send a PDF to Mistral OCR and return combined markdown.
 
         Args:
             pdf_path: Path to the PDF file.
 
         Returns:
-            Tuple of (text_elements, table_elements, image_elements).
-            Each element is a dict with 'content', 'type', and 'metadata' keys.
+            Raw markdown text from all pages.
         """
-        logger.info("parsing_pdf", filename=pdf_path.name)
+        with open(pdf_path, "rb") as f:
+            pdf_base64 = base64.b64encode(f.read()).decode("utf-8")
 
-        elements = partition_pdf(
-            filename=str(pdf_path),
-            strategy="hi_res",
-            extract_images_in_pdf=True,
-            infer_table_structure=True,
-            chunking_strategy="by_title",
-            max_characters=1500,
-            new_after_n_chars=1000,
-            combine_text_under_n_chars=500,
+        logger.info("calling_mistral_ocr", filename=pdf_path.name)
+
+        ocr_response = self._client.ocr.process(
+            model=OCR_MODEL,
+            document={
+                "type": "document_url",
+                "document_url": f"data:application/pdf;base64,{pdf_base64}",
+            },
         )
 
-        text_elements: list[dict[str, Any]] = []
+        pages_md: list[str] = []
+        for page in ocr_response.pages:
+            pages_md.append(page.markdown)
+
+        raw_markdown = "\n\n".join(pages_md)
+        logger.info(
+            "ocr_complete",
+            filename=pdf_path.name,
+            pages=len(ocr_response.pages),
+            chars=len(raw_markdown),
+        )
+        return raw_markdown
+
+    # ------------------------------------------------------------------
+    # Post-processing via Mistral Chat
+    # ------------------------------------------------------------------
+
+    def _post_process(self, raw_markdown: str, filename: str) -> str:
+        """Post-process raw OCR markdown through Mistral chat.
+
+        Uses a structured prompt to extract clean text and generate
+        descriptions for tables, graphs, and schemas.
+
+        Args:
+            raw_markdown: Raw OCR output.
+            filename: Source filename for logging.
+
+        Returns:
+            Clean, structured text ready for the RAG pipeline.
+        """
+        prompt = POST_PROCESS_PROMPT.format(ocr_content=raw_markdown)
+
+        logger.info("post_processing", filename=filename)
+
+        response = self._client.chat.complete(
+            model=CHAT_MODEL,
+            messages=[
+                {
+                    "role": "user",
+                    "content": prompt,
+                }
+            ],
+            temperature=0.1,
+        )
+
+        result = response.choices[0].message.content
+        logger.info(
+            "post_processing_complete",
+            filename=filename,
+            output_chars=len(result),
+        )
+        return result
+
+    # ------------------------------------------------------------------
+    # Public API (same contract as before)
+    # ------------------------------------------------------------------
+
+    def extract_document_elements(
+        self,
+        file_path: Path,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+        """Extract text, table, and image elements from a PDF via Mistral OCR.
+
+        The Mistral OCR + chat post-processing pipeline returns a single
+        unified text block that already contains inline table and figure
+        descriptions. We wrap the entire output as a single text element
+        so downstream chunking works unchanged.
+
+        For .txt files we fall back to plain text reading.
+
+        Args:
+            file_path: Path to the document file.
+
+        Returns:
+            Tuple of (text_elements, table_elements, image_elements).
+            table_elements and image_elements are always empty because
+            their descriptions are inlined into the text by the prompt.
+        """
+        logger.info("parsing_document", filename=file_path.name)
+
+        if file_path.suffix.lower() == ".pdf":
+            # Step 1: OCR
+            raw_markdown = self._ocr_pdf(file_path)
+
+            # Step 2: Post-process with structured prompt
+            clean_text = self._post_process(raw_markdown, file_path.name)
+
+            text_elements = [
+                {
+                    "content": clean_text,
+                    "type": "text",
+                    "metadata": {
+                        "source_file": file_path.name,
+                        "parser": "mistral_ocr",
+                    },
+                }
+            ]
+
+        elif file_path.suffix.lower() == ".txt":
+            content = file_path.read_text(encoding="utf-8", errors="replace")
+            text_elements = [
+                {
+                    "content": content,
+                    "type": "text",
+                    "metadata": {
+                        "source_file": file_path.name,
+                        "parser": "plaintext",
+                    },
+                }
+            ] if content.strip() else []
+
+        else:
+            logger.warning("unsupported_file_type", filename=file_path.name)
+            return [], [], []
+
+        # Table and image descriptions are inlined by the prompt
         table_elements: list[dict[str, Any]] = []
         image_elements: list[dict[str, Any]] = []
 
-        for element in elements:
-            element_type = type(element).__name__
-            metadata = self._serialize_metadata(element.metadata)
-            metadata["source_file"] = pdf_path.name
-
-            if element_type == "Table":
-                table_data = {
-                    "content": (
-                        element.metadata.text_as_html
-                        if hasattr(element.metadata, "text_as_html")
-                        and element.metadata.text_as_html
-                        else str(element)
-                    ),
-                    "type": "table",
-                    "metadata": metadata,
-                }
-                table_elements.append(table_data)
-            elif element_type == "Image":
-                image_data = {
-                    "content": (
-                        element.metadata.image_base64
-                        if hasattr(element.metadata, "image_base64")
-                        and element.metadata.image_base64
-                        else str(element)
-                    ),
-                    "type": "image",
-                    "metadata": metadata,
-                }
-                image_elements.append(image_data)
-            else:
-                text_content = str(element)
-                if text_content.strip():
-                    text_data = {
-                        "content": text_content,
-                        "type": "text",
-                        "metadata": metadata,
-                    }
-                    text_elements.append(text_data)
-
         logger.info(
-            "pdf_parsed",
-            filename=pdf_path.name,
+            "document_parsed",
+            filename=file_path.name,
             texts=len(text_elements),
             tables=len(table_elements),
             images=len(image_elements),
@@ -237,38 +347,47 @@ class PDFParser:
             logger.warning("cache_load_failed", path=str(cache_path), error=str(e))
             return None
 
-    def process_pdfs(
+    def process_documents(
         self,
-        pdf_dir: Path | None = None,
+        data_dir: Path | None = None,
     ) -> list[dict[str, Any]]:
-        """Process all PDFs in a directory with idempotency.
+        """Process all supported documents in a directory recursively with idempotency.
 
-        Skips PDFs whose SHA-256 hash already exists in the manifest.
+        Skips files whose SHA-256 hash already exists in the manifest.
         Saves extracted elements to data/processed/ for caching.
 
         Args:
-            pdf_dir: Directory containing PDFs. Defaults to settings.raw_pdf_dir.
+            data_dir: Directory containing documents. Defaults to settings.raw_pdf_dir.
 
         Returns:
-            List of all processed element sets (text, table, image per PDF).
+            List of all processed element sets (text, table, image per document).
         """
-        pdf_dir = pdf_dir or self._settings.raw_pdf_dir
+        data_dir = data_dir or self._settings.raw_pdf_dir
         manifest = self._load_manifest()
         all_results: list[dict[str, Any]] = []
 
-        pdf_files = sorted(pdf_dir.glob("*.pdf"))
-        logger.info("processing_pdfs", total=len(pdf_files))
+        # Find both PDF and TXT files recursively
+        doc_files = []
+        doc_files.extend(data_dir.rglob("*.pdf"))
+        doc_files.extend(data_dir.rglob("*.txt"))
+        doc_files.extend(data_dir.rglob("*.PDF"))
+        doc_files.extend(data_dir.rglob("*.TXT"))
 
-        for pdf_path in pdf_files:
-            file_hash = self.compute_file_hash(pdf_path)
+        # Sort for deterministic processing
+        doc_files = sorted(list(set(doc_files)))
+
+        logger.info("processing_documents", total=len(doc_files))
+
+        for doc_path in doc_files:
+            file_hash = self.compute_file_hash(doc_path)
 
             if file_hash in manifest:
-                logger.info("skipping_processed", filename=pdf_path.name)
-                cached = self.load_cached_elements(pdf_path)
+                logger.info("skipping_processed", filename=doc_path.name)
+                cached = self.load_cached_elements(doc_path)
                 if cached:
                     text_els, table_els, image_els = cached
                     all_results.append({
-                        "source_file": pdf_path.name,
+                        "source_file": doc_path.name,
                         "text_elements": text_els,
                         "table_elements": table_els,
                         "image_elements": image_els,
@@ -276,23 +395,26 @@ class PDFParser:
                 continue
 
             try:
-                text_els, table_els, image_els = self.extract_pdf_elements(pdf_path)
-                self._save_elements(pdf_path, text_els, table_els, image_els)
+                text_els, table_els, image_els = self.extract_document_elements(doc_path)
+                self._save_elements(doc_path, text_els, table_els, image_els)
 
-                manifest[file_hash] = pdf_path.name
+                manifest[file_hash] = doc_path.name
                 self._save_manifest(manifest)
 
                 all_results.append({
-                    "source_file": pdf_path.name,
+                    "source_file": doc_path.name,
                     "text_elements": text_els,
                     "table_elements": table_els,
                     "image_elements": image_els,
                 })
 
+                # Small delay between API calls to respect rate limits
+                time.sleep(0.5)
+
             except Exception as e:
                 logger.error(
-                    "pdf_processing_error",
-                    filename=pdf_path.name,
+                    "document_processing_error",
+                    filename=doc_path.name,
                     error=str(e),
                 )
 
