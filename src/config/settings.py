@@ -192,11 +192,6 @@ class Settings(BaseSettings):
         """Ingestion manifest for idempotent processing."""
         return self.processed_dir / "manifest.json"
 
-    @property
-    def assets_dir(self) -> Path:
-        """Static assets directory for the Streamlit app."""
-        return self.base_dir / "src" / "app" / "assets"
-
     def ensure_directories(self) -> None:
         """Create all required data directories if they don't exist."""
         for directory in [

@@ -74,4 +74,5 @@ data/chat_sessions.json
 data/PDFS/
 data/TEXTS/
 data/requests/
+*.rar
 
