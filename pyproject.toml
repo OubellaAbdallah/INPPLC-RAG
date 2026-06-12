@@ -2,7 +2,7 @@
 name = "inpplc-rag"
 version = "1.0.0"
 description = "RAG Information Assistant for INPPLC Morocco"
-authors = ["Soufiane Elassri"]
+authors = ["Abdallah Oubella"]
 readme = "README.md"
 license = "MIT"
 packages = [{include = "src"}]
