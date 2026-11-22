@@ -1,7 +1,5 @@
 # Legal Consultation RAG Assistant — INPPLC
 
-> 🇫🇷 *Une version française de ce document est disponible dans [`README.fr.md`](README.fr.md).*
-
 An open-source, pro-bono **Retrieval-Augmented Generation (RAG)** assistant designed for legal and regulatory consultation around Morocco's **National Authority for Probity, Prevention and the Fight against Corruption (INPPLC)**. It helps users navigate anti-corruption legislation, asset declaration requirements, national assessment reports, and public governance frameworks with verifiable source citations.
 
 ---
